@@ -240,7 +240,14 @@ def add_columns_to_table(columns_to_add: dict, engine: sqlalchemy.engine.base.En
 
 
 @task
-def get_only_new_rows(df_new: pd.DataFrame, engine: sqlalchemy.engine.base.Engine, table_name: str, table_schema: str, columns_to_compare: list[str], key_columns: list[str], timestamp_column: str = 'TIMESTAMP_LECTURA') -> pd.DataFrame:
+def get_only_new_rows(df_new: pd.DataFrame,
+                      engine: sqlalchemy.engine.base.Engine,
+                      table_name: str,
+                      table_schema: str,
+                      columns_to_compare: list[str],
+                      key_columns: list[str],
+                      timestamp_column: str = 'TIMESTAMP_LECTURA'
+                      ) -> pd.DataFrame:
     """
     Compara los datos de un DataFrame con los datos actuales en una tabla en el Data Warehouse y devuelve solo las filas nuevas.
     Utiliza las columnas clave para determinar la última versión de cada fila y solo traer esa.
@@ -285,6 +292,9 @@ def get_only_new_rows(df_new: pd.DataFrame, engine: sqlalchemy.engine.base.Engin
         else:
             raise TypeError("key_columns debe ser una lista de strings.")
 
+    if not isinstance(timestamp_column, str):
+        raise TypeError("timestamp_column debe ser un string.")
+
     columns_df_new = df_new.columns.tolist()
 
     if not all(col in columns_df_new for col in columns_to_compare):
@@ -317,7 +327,9 @@ def get_only_new_rows(df_new: pd.DataFrame, engine: sqlalchemy.engine.base.Engin
         {prefix_key_columns_str}
     """
 
-    df_existing = pd.read_sql_query(query, engine)
+    # Quitar columnas que no se van a comparar
+    column_types = {col: df_new[col].dtype for col in columns_to_compare}
+    df_existing = pd.read_sql_query(query, engine, dtype=column_types)
 
     if df_existing.empty:
         logger.info("No se encontraron datos en la tabla '%s.%s'. Se insertarán todos los datos nuevos.", table_schema, table_name)
@@ -329,7 +341,11 @@ def get_only_new_rows(df_new: pd.DataFrame, engine: sqlalchemy.engine.base.Engin
     df_existing = df_existing.replace({None: np.nan})
     df_new = df_new.replace({None: np.nan})
 
-    # Paso 2: Comparar los datos de df_new con los datos actuales en el DW
+    # Paso 2: Ordenar el dataframe nuevo para comparar
+    df_new = df_new.sort_values(by=key_columns)
+    df_new = df_new.reset_index(drop=True)
+
+    # Paso 3: Comparar los datos de df_new con los datos actuales en el DW
     df_merge = pd.merge(df_new, df_existing, on=columns_to_compare, how='left', indicator=True)
     df_only_new = df_merge[df_merge['_merge'] == 'left_only'].drop(columns=['_merge'])
 
